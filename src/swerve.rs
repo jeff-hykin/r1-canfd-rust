@@ -54,10 +54,10 @@ impl MapAngleBranches {
     }
 }
 
-/// ccn's `default_chassis_type` initialiser is "W0" (static init ccn@0x124c20); the `chassis_type` param can override.
-pub const VENDOR_CHASSIS_TYPE: &str = "W0";
+/// The `chassis_type` the robot's launch passes (r1-pro-0219 /tmp/launch_params: `W1`; the binary's default is "W0").
+pub const VENDOR_CHASSIS_TYPE: &str = "W1";
 /// The branches for [`VENDOR_CHASSIS_TYPE`].
-pub const VENDOR_MAP_ANGLE: MapAngleBranches = MapAngleBranches { fold_to_half_plane: true, flip_toward_actual: false };
+pub const VENDOR_MAP_ANGLE: MapAngleBranches = MapAngleBranches { fold_to_half_plane: false, flip_toward_actual: true };
 
 /// `map_angle` ccn@0x12a184: (steer angle to command, speed sign).
 pub fn map_angle(branches: MapAngleBranches, angle_ref: f64, angle_actual: f64) -> (f64, f64) {
@@ -95,14 +95,13 @@ fn limit(value: f64, max: f64) -> f64 {
     }
 }
 
-/// Wheel-frame (x, y) velocities of fl, fr, r for a twist (vector_control ccn@0x12a340).
+/// Wheel-frame (x, y) velocities of fl, fr, r for a twist, with vector_control ccn@0x12a340's fused ops
+/// (`fmadd` for the front y, `fmsub` for the rear y).
 pub fn wheel_vectors(geometry: &SwerveGeometry, twist: Twist) -> [(f64, f64); 3] {
     let (vx, vy, wz) = (twist.vx_m_s, twist.vy_m_s, twist.wz_rad_s);
-    [
-        (vx - wz * geometry.b_m, vy + wz * geometry.a_m),
-        (wz * geometry.b_m + vx, vy + wz * geometry.a_m),
-        (vx, vy - wz * geometry.r_m),
-    ]
+    let front_y = geometry.a_m.mul_add(wz, vy);
+    let turn = wz * geometry.b_m;
+    [(vx - turn, front_y), (turn + vx, front_y), (vx, (-geometry.r_m).mul_add(wz, vy))]
 }
 
 /// The IK's memory: last commanded angle per wheel (`last_angle_ref_fl/rl/rr` in ccn's .bss).
@@ -131,7 +130,7 @@ impl SwerveIk {
         let mut speeds = [0.0; 3];
         for wheel in 0..3 {
             let (x, y) = vectors[wheel];
-            let speed = (x * x + y * y).sqrt();
+            let speed = x.mul_add(x, y * y).sqrt();
             let reference = y.atan2(x);
             angles[wheel] = map_angle(branches, reference, self.last_angle_ref_rad[wheel]).0;
             speeds[wheel] = map_angle(branches, reference, measured_steer_rad[wheel]).1 * speed;
@@ -149,17 +148,18 @@ pub fn forward_kinematics(geometry: &SwerveGeometry, wheel_speed_m_s: &[f64; 3],
     let theta = (geometry.a_m / geometry.b_m).atan();
     let tangent_fr = (theta.cos(), theta.sin());
     let tangent_fl = ((HALF_TURN - theta).cos(), (HALF_TURN - theta).sin());
-    let tangent_r = (0.0, -1.0);
-    let wheel = |index: usize| {
-        let (sin, cos) = steer_angle_rad[index].sin_cos();
-        (wheel_speed_m_s[index] * cos, wheel_speed_m_s[index] * sin)
-    };
-    let (fl, fr, r) = (wheel(0), wheel(1), wheel(2));
-    let dot = |tangent: (f64, f64), vector: (f64, f64)| tangent.0 * vector.0 + tangent.1 * vector.1;
+    let tangent_r: (f64, f64) = (0.0, -1.0);
+    let (sin, cos): (Vec<f64>, Vec<f64>) = steer_angle_rad.iter().map(|angle| angle.sin_cos()).unzip();
+    let v = wheel_speed_m_s;
+    let (c_fl, s_fl, c_fr, s_fr, s_r) = (cos[0] * v[0], sin[0] * v[0], cos[1] * v[1], sin[1] * v[1], sin[2] * v[2]);
+    // the fused / separate roundings exactly as ccn@0x128d30 orders them
+    let r = geometry.r_m;
+    let fr_term = c_fr.mul_add(tangent_fr.0, s_fr * tangent_fr.1) / r;
+    let fl_term = c_fl.mul_add(tangent_fl.0, s_fl * tangent_fl.1) / r;
     Twist {
-        vx_m_s: (fl.0 + fr.0 + r.0) / 3.0,
-        vy_m_s: (fl.1 + fr.1 + r.1) / 3.0,
-        wz_rad_s: (dot(tangent_fl, fl) + dot(tangent_fr, fr) + dot(tangent_r, r)) / geometry.r_m / 3.0,
+        vx_m_s: v[2].mul_add(cos[2], c_fl + c_fr) / 3.0,
+        vy_m_s: ((s_fl + s_fr) + s_r) / 3.0,
+        wz_rad_s: ((s_r * tangent_r.1) / r + (fr_term + fl_term)) / 3.0,
     }
 }
 
