@@ -34,8 +34,10 @@ pub mod frame;
 pub mod gripper_geometry;
 pub mod hand;
 pub mod imu;
+pub mod odometry;
 pub mod power;
 pub mod status;
+pub mod swerve;
 pub mod torso;
 pub mod tracker;
 
