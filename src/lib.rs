@@ -33,6 +33,7 @@ pub mod device;
 pub mod encode;
 pub mod frame;
 pub mod gate;
+pub mod gripper_controller;
 pub mod gripper_geometry;
 pub mod hand;
 pub mod imu;
