@@ -117,6 +117,7 @@ fn whole_send_path_reproduces_the_captured_chassis_and_gripper_frames() {
         }
     }
     let count = |id: u32| sent.iter().filter(|frame| frame.id == id).count();
+    println!("sent 0x031 {} 0x051 {} 0x061 {}", count(0x031), count(0x051), count(0x061));
     assert!(
         count(0x031) > 900 && count(0x051) > 5000 && count(0x061) > 5000,
         "{} {} {}",

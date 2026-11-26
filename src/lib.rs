@@ -9,7 +9,10 @@
 //!   [`status`] (e-stop, error words, versions), [`hand`]; [`device`] is the ID table.
 //! - [`tracker`]: per-ID rate and staleness from frame timestamps alone.
 //!
-//! Commands other nodes send (arm, gripper, torso, chassis) decode as observed traffic; nothing here transmits.
+//! Send side (see LOGIC_VS_VENDOR.md): [`encode`] (HDAS's encoders, byte for byte), [`gate`] (HDAS's command
+//! checks), [`swerve`] / [`chassis_controller`] (chassis_control_node), [`gripper_geometry`] / [`gripper_controller`]
+//! (r1_gripper_controller), [`odometry`], and [`commander`], the API a native module calls. Commanders only return
+//! frames; `Bus::send` exists only with the off-by-default `transmit` feature.
 //!
 //! ```
 //! use r1_canfd::{candump, decode, Decoded};

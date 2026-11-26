@@ -13,7 +13,11 @@ CCU, VCU (chassis), TCU (torso) and both ACUs (arms) broadcast, decoded the way 
   words by name, and the e-stop. An ID with no decoder comes back `Unknown { id, data }`, and a known ID that is too
   short comes back `Malformed`. Nothing is dropped.
 - Commands other nodes put on the bus (arm, gripper, torso, chassis, LED, function frames) decode as observed
-  traffic. This crate has no transmit code at all.
+  traffic.
+- Send side: byte-exact ports of HDAS's encoders and command checks, chassis_control_node's swerve IK / ramp / timeout
+  loop, r1_gripper_controller's opening mapping and grasp modes, wheel odometry, and per-device commanders that return
+  frames (`commander`). Writing to the bus needs the off-by-default `transmit` feature (`Bus::send`). The vendor
+  comparison, step by step, is in [LOGIC_VS_VENDOR.md](LOGIC_VS_VENDOR.md).
 - `Tracker`: per-ID count, rate, gap range, staleness and payload lengths, worked out from frame timestamps only
   (no timers), so a replayed log reports what the live bus would have.
 

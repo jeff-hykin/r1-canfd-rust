@@ -43,6 +43,7 @@ const fn entry(id: u32, name: &'static str, direction: Direction, evidence: Evid
 }
 
 use Direction::{Both, ToBoard, ToHost};
+#[allow(unused_imports)] // no ID is unknown any more; the variant stays for new IDs
 use Evidence::{CodeOnly, Partial, Unknown, Verified};
 
 pub const DEVICES: &[Device] = &[
@@ -50,7 +51,7 @@ pub const DEVICES: &[Device] = &[
     entry(0x020, "IMU", ToHost, Verified, "chassis IMU (CCU), |a| 0.997-1.002 g; gyro deg/s inferred"),
     entry(0x021, "BMS", ToHost, Verified, "54.41 V, 98.9 %; no proven charging field (bytes 6-7 raw)"),
     entry(0x022, "LED_CMD", ToBoard, CodeOnly, "[r, g, b, mode]"),
-    entry(0x023, "UNKNOWN_0x023", ToBoard, Unknown, "1 byte, always 0x02, ~1.9 Hz, ESI-flagged host sender"),
+    entry(0x023, "FAN_LEVEL", ToBoard, Verified, "HDAS fan_control_thread: max(0, Orin thermal_zone0 C / 10 - 2), 0.5 s"),
     entry(0x025, "CCU_VERSION", ToHost, CodeOnly, "not in the capture"),
     entry(0x030, "MOTOR_STATUS", ToHost, Partial, "wheel/steer feedback; parked, wheel speed scale UNVERIFIED"),
     entry(0x031, "MOTOR_CTRL", ToBoard, Partial, "chassis command (HDAS, 50 Hz); all zero while parked"),
