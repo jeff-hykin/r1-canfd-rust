@@ -24,6 +24,7 @@ pub const JERK_PER_ACCELERATION: [f64; 3] = [10.0, 20.0, 10.0];
 /// calculateNextVelocity ccn@0x129f60 clamps every ramp output (also wz) to +-1.5.
 pub const RAMP_OUTPUT_LIMIT: f64 = 1.5;
 /// A wheel more than pi/8 off its target angle counts as misaligned (ccn@0x19c418).
+#[allow(clippy::approx_constant)] // the vendor's stored literal
 pub const MISALIGNED_RAD: f64 = 0.39269908169872414;
 /// While misaligned the ramp state is clamped to +-0.07 m/s (ccn@0x19c428/0x19c430) ...
 pub const MISALIGNED_LINEAR_LIMIT: f64 = 0.07;
@@ -215,9 +216,9 @@ impl ChassisController {
             } else {
                 MISALIGNED_LINEAR_LIMIT
             };
-            for axis in 0..2 {
-                ramped[axis] = ramped[axis].clamp(-limit, limit);
-                self.ramp_previous[axis] = self.ramp_previous[axis].clamp(-limit, limit);
+            for (ramp, previous) in ramped.iter_mut().zip(self.ramp_previous.iter_mut()).take(2) {
+                *ramp = ramp.clamp(-limit, limit);
+                *previous = previous.clamp(-limit, limit);
             }
         }
         if self.brake {

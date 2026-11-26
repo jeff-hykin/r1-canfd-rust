@@ -30,8 +30,9 @@ impl Range {
         Range { low: -limit, high: limit }
     }
 
+    /// HDAS rejects only `value < low` or `value > high` (fcmpe + b.mi / b.gt), so NaN passes.
     fn admits(self, value: f32) -> bool {
-        self.low <= value && value <= self.high
+        !(value < self.low || value > self.high)
     }
 }
 
@@ -148,6 +149,27 @@ pub fn check_torso(
     }
     Ok(accepted)
 }
+
+/// The gripper lambdas' checks (HDAS@0x1520d4 left / 0x1537d0 right): one element per array, the arm bounds.
+pub fn check_gripper(command: &MotorControl, limits: &ArmLimits) -> Result<(), Rejected> {
+    for (field, values) in [
+        ("p_des", &command.p_des),
+        ("v_des", &command.v_des),
+        ("kp", &command.kp),
+        ("kd", &command.kd),
+        ("t_ff", &command.t_ff),
+    ] {
+        expect_len(field, values, 1)?;
+    }
+    expect_within("p_des", &command.p_des, limits.position_rad)?;
+    expect_within("v_des", &command.v_des, limits.velocity_rad_s)?;
+    expect_within("kp", &command.kp, limits.kp)?;
+    expect_within("kd", &command.kd, limits.kd)?;
+    expect_within("t_ff", &command.t_ff, limits.torque_nm)
+}
+
+/// The LED lambda (HDAS@0x151784) clamps `mode > 1` to 1 with a warning, then sends.
+pub const LED_MAX_MODE: u8 = 1;
 
 /// The chassis lambda's check (HDAS@0x154ec0): p_des 3 entries, v_des 6, else dropped.
 pub fn check_chassis(command: &MotorControl) -> Result<(), Rejected> {

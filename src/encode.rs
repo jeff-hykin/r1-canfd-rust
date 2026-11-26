@@ -90,6 +90,7 @@ pub struct ArmJointTarget {
 }
 
 /// a2 arm position: `6.28 < p` -> 0x752F, `p < -6.28` -> 0x8AD1, else p x 4777 (arm_encode_impl lpm@0x11f950).
+#[allow(clippy::approx_constant)] // the vendor's stored literal
 const ARM_POSITION_LIMIT_RAD: f32 = 6.28;
 const ARM_POSITION_SCALE: f32 = 4777.0;
 const ARM_POSITION_HIGH_RAW: u16 = 0x752F;

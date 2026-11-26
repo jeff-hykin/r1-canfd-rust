@@ -13,6 +13,7 @@ pub const SEGMENT_BASES: [f64; 4] = [6.696960066389071, 20.090880199167213, 33.4
 /// Stroke at and beyond the last segment (rgc@0x1de718).
 pub const FULL_STROKE: f64 = 107.15136106222513;
 /// Phase inside each segment's sine (rgc@0x1de748, pi/8).
+#[allow(clippy::approx_constant)] // the vendor's stored literal
 pub const SEGMENT_PHASE_RAD: f64 = 0.39269908169872414;
 /// Crank length the sine is scaled by (literal 17.5 in getInverseLUT rgc@0x189a20).
 pub const CRANK: f64 = 17.5;

@@ -28,6 +28,7 @@ mod bytes;
 pub mod candump;
 pub mod chassis;
 pub mod chassis_controller;
+pub mod commander;
 pub mod decode;
 pub mod device;
 pub mod encode;

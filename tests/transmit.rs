@@ -87,3 +87,61 @@ fn torso_command_reencodes_byte_for_byte() {
     });
     assert_eq!(encode_torso(&joints).data, captured);
 }
+
+/// Replay the capture's feedback through every commander with the inputs the vendor stack had: chassis parked with
+/// zero twist under the gatekeeper, left gripper commanded closed (0), right open (100). Ticks follow the vendor
+/// loops on the capture's own clock: chassis every 20 ms, grippers every 2 ms.
+#[test]
+fn whole_send_path_reproduces_the_captured_chassis_and_gripper_frames() {
+    use r1_canfd::commander::{ChassisAuthority, Commanders};
+    use r1_canfd::swerve::Twist;
+
+    let chassis = constant_payload(0x031);
+    let left = constant_payload(0x051);
+    let right = constant_payload(0x061);
+    let mut commanders = Commanders::new(ChassisAuthority::Gatekeeper, false);
+    commanders.chassis.set_twist(Twist::default());
+    commanders.left_gripper.set(0.0);
+    commanders.right_gripper.set(100.0);
+    let (mut next_chassis_ns, mut next_gripper_ns) = (0u64, 0u64);
+    let mut sent = Vec::new();
+    for frame in frames() {
+        commanders.on_frame(&frame);
+        if frame.timestamp_ns >= next_gripper_ns {
+            commanders.tick_grippers(&mut sent);
+            next_gripper_ns = frame.timestamp_ns + 2_000_000;
+        }
+        if frame.timestamp_ns >= next_chassis_ns {
+            commanders.tick_chassis(&mut sent);
+            next_chassis_ns = frame.timestamp_ns + 20_000_000;
+        }
+    }
+    let count = |id: u32| sent.iter().filter(|frame| frame.id == id).count();
+    assert!(
+        count(0x031) > 900 && count(0x051) > 5000 && count(0x061) > 5000,
+        "{} {} {}",
+        count(0x031),
+        count(0x051),
+        count(0x061)
+    );
+    // Right side: OPEN QUESTION. Fed the captured right feedback (opening 102 mm, torque 0.013 + the vendor's 0.5
+    // effort offset) our port of detectGrasping sees a closing grasp (102 > 100 + 0.5, |effort - baseline| > 0.1) and
+    // goes HYBRID then FORCE (kp 0, kd 0, t 2.0), while the capture shows POSITION gains. The vendor must see a
+    // different position or effort on /hdas/feedback_gripper_right than this decode; see LOGIC_VS_VENDOR.md.
+    let right_sent: Vec<_> = sent.iter().filter(|frame| frame.id == 0x061).collect();
+    assert!(right_sent.iter().any(|frame| frame.data[..4] == right[..4]), "right reaches the open angle");
+    for frame in &sent {
+        match frame.id {
+            0x031 => assert_eq!(frame.data, chassis),
+            0x051 => assert_eq!(frame.data, left),
+            _ => {}
+        }
+    }
+}
+
+/// 0x023 is HDAS's fan level from the Orin's thermal_zone0; the robot read 47.9 C during the investigation.
+#[test]
+fn fan_frame_matches_the_capture() {
+    use r1_canfd::commander::FanCommander;
+    assert_eq!(FanCommander.tick(47_900).data, constant_payload(0x023));
+}
