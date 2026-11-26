@@ -1,5 +1,5 @@
 //! The live bus (Linux): a raw SocketCAN socket with CAN FD frames on and kernel receive timestamps, read as an
-//! iterator of [`Frame`]s. Receive only: this crate has no send path at all.
+//! iterator of [`Frame`]s. Receive only unless the `transmit` cargo feature is on, which adds [`Bus::send`].
 //!
 //! Mirrors HDAS's socket (`CAN_Interface::connect` comm@0x136b70): `socket(PF_CAN, SOCK_RAW, CAN_RAW)`, bound to the
 //! interface, `CAN_RAW_FD_FRAMES = 1`, no `CAN_RAW_FILTER` (every ID). It does not configure the link (bit rates,
@@ -153,6 +153,37 @@ fn software_timestamp_ns(message: &libc::msghdr) -> Option<u64> {
         header = unsafe { libc::CMSG_NXTHDR(message, header) };
     }
     None
+}
+
+/// `struct canfd_frame` for one outgoing frame: standard ID, BRS (plus ESI when copying the vendor's flags).
+#[cfg(feature = "transmit")]
+fn outgoing_canfd(frame: &crate::encode::OutgoingFrame, flags: u8) -> io::Result<CanFdFrame> {
+    if frame.data.len() > CANFD_MAX_DLEN || frame.id > CAN_SFF_MASK {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "frame too long or ID not 11-bit"));
+    }
+    let mut raw: CanFdFrame = unsafe { mem::zeroed() };
+    raw.can_id = frame.id;
+    raw.len = frame.data.len() as u8;
+    raw.flags = flags;
+    raw.data[..frame.data.len()].copy_from_slice(&frame.data);
+    Ok(raw)
+}
+
+#[cfg(feature = "transmit")]
+impl Bus {
+    /// Write one frame (`write(fd, frame, 72)` as `CAN_Interface::writeCANFD` comm@0x134830 does); `flags` is
+    /// `frame::FLAG_BRS`, or `frame::VENDOR_HOST_FLAGS` (BRS|ESI) to copy the vendor bit for bit.
+    pub fn send(&self, frame: &crate::encode::OutgoingFrame, flags: u8) -> io::Result<()> {
+        let raw = outgoing_canfd(frame, flags)?;
+        let written = unsafe { libc::write(self.fd.as_raw_fd(), (&raw as *const CanFdFrame).cast(), CANFD_MTU) };
+        if written < 0 {
+            return Err(last_error("write(can)"));
+        }
+        if written as usize != CANFD_MTU {
+            return Err(io::Error::new(io::ErrorKind::WriteZero, format!("short CAN write: {written} bytes")));
+        }
+        Ok(())
+    }
 }
 
 impl Iterator for Bus {

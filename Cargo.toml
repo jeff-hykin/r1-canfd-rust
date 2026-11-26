@@ -11,6 +11,10 @@ keywords = ["robotics", "galaxea", "r1", "canfd", "socketcan"]
 categories = ["science::robotics", "network-programming", "parser-implementations"]
 include = ["src/**", "tests/**", "Cargo.toml", "README.md", "LICENSE"]
 
+[features]
+# Adds Bus::send. Off by default: nothing in this crate can put a frame on the bus unless a binary opts in.
+transmit = []
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -429,13 +429,19 @@ mod tests {
         assert_eq!(&data[12..16], &[0x13, 0x88, 0xEC, 0x78]);
         assert_eq!(data.len(), 20);
         let decoded = ChassisCommand::decode(&data).unwrap();
-        assert_eq!((decoded.wheel_speed_m_s[2], decoded.steer_angle_rad[2], decoded.steer_rate_rad_s[2]), (0.25, -0.5, 1.0));
+        assert_eq!(
+            (decoded.wheel_speed_m_s[2], decoded.steer_angle_rad[2], decoded.steer_rate_rad_s[2]),
+            (0.25, -0.5, 1.0)
+        );
     }
 
     #[test]
     fn small_frames() {
         assert_eq!(encode_led(1, 2, 3, 1), OutgoingFrame { id: 0x022, data: vec![1, 2, 3, 1] });
-        assert_eq!(encode_function_frame(FunctionBoard::RightArm, 3).unwrap(), OutgoingFrame { id: 0x063, data: vec![3] });
+        assert_eq!(
+            encode_function_frame(FunctionBoard::RightArm, 3).unwrap(),
+            OutgoingFrame { id: 0x063, data: vec![3] }
+        );
         assert!(encode_function_frame(FunctionBoard::Torso, 0).is_none());
         assert!(encode_function_frame(FunctionBoard::Torso, 11).is_none());
         assert_eq!(encode_chassis_auto_calibration().data, [0x20]);

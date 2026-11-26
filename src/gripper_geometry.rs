@@ -6,7 +6,8 @@
 
 /// Segment bounds of the linkage angle (`gripper_geom::kSegLimits` rgc@0x1de790).
 #[allow(clippy::approx_constant)] // the vendor's stored doubles
-pub const SEGMENT_LIMITS_RAD: [f64; 5] = [-0.1, 0.7853981633974483, 1.5707963267948966, 2.356194490192345, 3.141592653589793];
+pub const SEGMENT_LIMITS_RAD: [f64; 5] =
+    [-0.1, 0.7853981633974483, 1.5707963267948966, 2.356194490192345, 3.141592653589793];
 /// Per-segment stroke bases (rgc@0x1de740, 0x1de720, 0x1de728, 0x1de738).
 pub const SEGMENT_BASES: [f64; 4] = [6.696960066389071, 20.090880199167213, 33.48480033194535, 46.8787204647235];
 /// Stroke at and beyond the last segment (rgc@0x1de718).
