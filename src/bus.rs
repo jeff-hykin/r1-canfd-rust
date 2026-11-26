@@ -19,6 +19,9 @@ const CAN_RAW: libc::c_int = 1;
 const SOL_CAN_RAW: libc::c_int = 101;
 /// linux/can/raw.h `CAN_RAW_FD_FRAMES`.
 const CAN_RAW_FD_FRAMES: libc::c_int = 5;
+/// `CAN_RAW_FILTER` (linux/can/raw.h); an empty filter list receives nothing.
+#[cfg(feature = "transmit")]
+const CAN_RAW_FILTER: libc::c_int = 1;
 /// asm-generic/socket.h `SO_TIMESTAMPING` (SO_TIMESTAMPING_OLD, which 64-bit time_t uses); also the cmsg type.
 const SO_TIMESTAMPING: libc::c_int = 37;
 /// linux/net_tstamp.h `SOF_TIMESTAMPING_RX_SOFTWARE | SOF_TIMESTAMPING_SOFTWARE`.
@@ -171,6 +174,17 @@ fn outgoing_canfd(frame: &crate::encode::OutgoingFrame, flags: u8) -> io::Result
 
 #[cfg(feature = "transmit")]
 impl Bus {
+    /// A socket for sending only: bound like [`Bus::open`] but with an empty receive filter, so nothing queues up
+    /// on it (the reading `Bus` still sees every sent frame through the kernel's local loopback).
+    pub fn open_send_only(interface: &str) -> io::Result<Bus> {
+        let bus = Bus::open(interface)?;
+        let empty = unsafe { libc::setsockopt(bus.fd.as_raw_fd(), SOL_CAN_RAW, CAN_RAW_FILTER, std::ptr::null(), 0) };
+        if empty != 0 {
+            return Err(last_error("CAN_RAW_FILTER (none)"));
+        }
+        Ok(bus)
+    }
+
     /// Write one frame (`write(fd, frame, 72)` as `CAN_Interface::writeCANFD` comm@0x134830 does); `flags` is
     /// `frame::FLAG_BRS`, or `frame::VENDOR_HOST_FLAGS` (BRS|ESI) to copy the vendor bit for bit.
     pub fn send(&self, frame: &crate::encode::OutgoingFrame, flags: u8) -> io::Result<()> {

@@ -23,7 +23,8 @@ use crate::encode::{
 use crate::frame::Frame;
 use crate::gate::{check_arm, ArmLimits, MotorControl, Rejected, LED_MAX_MODE, VENDOR_ARM_LIMITS};
 use crate::gripper_controller::{
-    GripperConfig, GripperController, VENDOR_OPENING_AFTER_STARTUP, VENDOR_STARTUP_HOLD_S, VENDOR_STARTUP_OPENINGS,
+    GripperConfig, GripperController, OTG_CYCLE_S, VENDOR_BASELINE_GATHER_PERIOD_S, VENDOR_BASELINE_GATHER_S,
+    VENDOR_OPENING_AFTER_STARTUP, VENDOR_STARTUP_HOLD_S, VENDOR_STARTUP_OPENINGS,
 };
 use crate::gripper_geometry::InverseLut;
 use crate::odometry::{Pose2d, WheelOdometry};
@@ -179,33 +180,57 @@ impl ChassisCommander {
     }
 }
 
-/// Gripper command path: r1_gripper_controller (startup sweep, modes, OTG), then encode_Gripper.
+/// Gripper command path: r1_gripper_controller (startup, modes, OTG), then encode_Gripper.
 #[derive(Clone, Debug, Serialize)]
 pub struct GripperCommander {
     pub side: Side,
     pub controller: GripperController,
     /// Latest 0x058 / 0x068 feedback: opening (HDAS's linkage), velocity, torque as effort.
     pub feedback: Option<(f64, f64, f64)>,
-    /// 2 ms ticks spent in the vendor's startup sweep; `None` once done or skipped.
-    startup_ticks: Option<u32>,
+    pub startup: GripperStartup,
+}
+
+/// Where a gripper is in performInitialization (rgc main), counted in 2 ms ticks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GripperStartup {
+    /// "[Init] Collecting baseline forces...": baseline only, nothing sent.
+    Gathering {
+        ticks: u32,
+        samples: u32,
+    },
+    /// "[Init] Performing open-close-open test motion...": direct targets, no control pass.
+    Sweeping {
+        ticks: u32,
+    },
+    /// Joining a running vendor: the first feedback settles the baseline, then control.
+    Joining,
+    Done,
 }
 
 /// Control ticks per startup step: 2.0 s at the 500 Hz loop (performInitialization rgc, Rate 2 ms rgc@0x15aa10).
-const STARTUP_TICKS_PER_STEP: u32 = (VENDOR_STARTUP_HOLD_S / crate::gripper_controller::OTG_CYCLE_S) as u32;
+const STARTUP_TICKS_PER_STEP: u32 = (VENDOR_STARTUP_HOLD_S / OTG_CYCLE_S) as u32;
+/// 2 ms ticks in the 1 s baseline gather.
+const GATHER_TICKS: u32 = (VENDOR_BASELINE_GATHER_S / OTG_CYCLE_S) as u32;
 
 impl GripperCommander {
-    /// `run_startup_sweep`: open 50 / close / 50 / open, 2 s each, like the vendor after it sees feedback.
-    pub fn new(side: Side, lut: InverseLut, run_startup_sweep: bool) -> GripperCommander {
+    /// `run_startup`: the vendor's 1 s baseline gather, then open 50 / close / 50 / open, 2 s each, once feedback
+    /// arrives. Off: join a running vendor (the first feedback settles the baseline).
+    pub fn new(side: Side, lut: InverseLut, run_startup: bool) -> GripperCommander {
         let side_index = if side == Side::Left { 0 } else { 1 };
         GripperCommander {
             side,
             controller: GripperController::new(GripperConfig::vendor(side_index), lut),
             feedback: None,
-            startup_ticks: if run_startup_sweep { Some(0) } else { None },
+            startup: if run_startup {
+                GripperStartup::Gathering { ticks: 0, samples: 0 }
+            } else {
+                GripperStartup::Joining
+            },
         }
     }
 
-    /// `/motion_target/target_position_gripper_*`: opening 0 (closed) .. 100 (open). Ignored during the startup sweep,
+    /// `/motion_target/target_position_gripper_*`: opening 0 (closed) .. 100 (open). Overwritten by the startup,
     /// whose end forces the target to 100 like the vendor.
     pub fn set(&mut self, opening: f64) {
         let position = self.feedback.map(|(position, _, _)| position).unwrap_or(0.0);
@@ -216,21 +241,44 @@ impl GripperCommander {
         self.feedback = Some((feedback.opening_mm.unwrap_or(0.0), feedback.velocity, feedback.torque));
     }
 
-    /// One 2 ms pass: control (once feedback has arrived) and an OTG step; `None` before the first feedback.
+    /// One 2 ms pass; `None` before the first feedback and during the baseline gather.
     pub fn tick(&mut self) -> Option<OutgoingFrame> {
         let (position, velocity, effort) = self.feedback?;
-        if let Some(ticks) = self.startup_ticks {
-            let step = (ticks / STARTUP_TICKS_PER_STEP) as usize;
-            match VENDOR_STARTUP_OPENINGS.get(step) {
-                Some(&opening) => {
-                    self.controller.target_opening = opening;
-                    self.startup_ticks = Some(ticks + 1);
-                }
-                None => {
-                    self.controller.target_opening = VENDOR_OPENING_AFTER_STARTUP;
-                    self.startup_ticks = None;
+        match self.startup {
+            GripperStartup::Gathering { ticks, samples } => {
+                // the vendor samples every 5 ms: take one whenever the 2 ms clock crosses a 5 ms boundary
+                let due = ((f64::from(ticks) * OTG_CYCLE_S) / VENDOR_BASELINE_GATHER_PERIOD_S) as u32 + 1;
+                let samples = if samples < due {
+                    self.controller.gather_baseline(effort);
+                    samples + 1
+                } else {
+                    samples
+                };
+                self.startup = if ticks + 1 >= GATHER_TICKS {
+                    GripperStartup::Sweeping { ticks: 0 }
+                } else {
+                    GripperStartup::Gathering { ticks: ticks + 1, samples }
+                };
+                return None;
+            }
+            GripperStartup::Sweeping { ticks } => {
+                match VENDOR_STARTUP_OPENINGS.get((ticks / STARTUP_TICKS_PER_STEP) as usize) {
+                    Some(&opening) => {
+                        self.controller.direct_target(opening);
+                        self.startup = GripperStartup::Sweeping { ticks: ticks + 1 };
+                        return Some(encode_gripper(self.side, &self.controller.otg_step()));
+                    }
+                    None => {
+                        self.controller.target_opening = VENDOR_OPENING_AFTER_STARTUP;
+                        self.startup = GripperStartup::Done;
+                    }
                 }
             }
+            GripperStartup::Joining => {
+                self.controller.settle_baseline(effort);
+                self.startup = GripperStartup::Done;
+            }
+            GripperStartup::Done => {}
         }
         self.controller.control(position, velocity, effort);
         Some(encode_gripper(self.side, &self.controller.otg_step()))
@@ -290,15 +338,15 @@ pub struct Commanders {
 }
 
 impl Commanders {
-    pub fn new(authority: ChassisAuthority, run_gripper_startup_sweep: bool) -> Commanders {
+    pub fn new(authority: ChassisAuthority, run_gripper_startup: bool) -> Commanders {
         let lut = InverseLut::vendor();
         Commanders {
             left_arm: ArmCommander::new(Side::Left),
             right_arm: ArmCommander::new(Side::Right),
             torso: TorsoCommander::default(),
             chassis: ChassisCommander::new(authority),
-            left_gripper: GripperCommander::new(Side::Left, lut.clone(), run_gripper_startup_sweep),
-            right_gripper: GripperCommander::new(Side::Right, lut, run_gripper_startup_sweep),
+            left_gripper: GripperCommander::new(Side::Left, lut.clone(), run_gripper_startup),
+            right_gripper: GripperCommander::new(Side::Right, lut, run_gripper_startup),
             fan: FanCommander,
             emergency_stop: EmergencyStopState::default(),
         }
@@ -387,7 +435,9 @@ mod tests {
         };
         gripper.on_feedback(&feedback);
         gripper.set(0.0);
-        let frames: Vec<_> = (0..4 * STARTUP_TICKS_PER_STEP + 1000).filter_map(|_| gripper.tick()).collect();
+        let frames: Vec<_> =
+            (0..GATHER_TICKS + 4 * STARTUP_TICKS_PER_STEP + 1000).filter_map(|_| gripper.tick()).collect();
+        assert_eq!(frames.len() as u32, 4 * STARTUP_TICKS_PER_STEP + 1000, "nothing is sent while gathering");
         assert_eq!(gripper.controller.target_opening, 100.0);
         // fully open at the end, the capture's right-gripper payload
         assert_eq!(frames.last().unwrap().data, [0xCC, 0x98, 0, 0, 0x04, 0xB0, 0x05, 0xDC, 0, 0]);

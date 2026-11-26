@@ -35,6 +35,11 @@ pub const VENDOR_STARTUP_OPENINGS: [f64; 4] = [50.0, 0.0, 50.0, 100.0];
 pub const VENDOR_STARTUP_HOLD_S: f64 = 2.0;
 /// The opening the controller holds once startup ends.
 pub const VENDOR_OPENING_AFTER_STARTUP: f64 = 100.0;
+/// performInitialization's "[Init] Collecting baseline forces..." loop (rgc@0x15a838): updateForceBaseline on the
+/// latest effort of each side (rgc@0x15abf8 / 0x15ac34) for 1.0 s ...
+pub const VENDOR_BASELINE_GATHER_S: f64 = 1.0;
+/// ... once per 5 ms (sleep_for 5000000 ns, rgc@0x15accc); no grasp detection and no control meanwhile.
+pub const VENDOR_BASELINE_GATHER_PERIOD_S: f64 = 0.005;
 
 /// Force baseline: a window of the last 100 efforts, used once it holds 50 (updateForceBaseline rgc@0x15cec0) ...
 const BASELINE_WINDOW: usize = 100;
@@ -174,6 +179,24 @@ impl GripperController {
             self.mode = GripperMode::Position;
             self.is_grasping = false;
         }
+    }
+
+    /// performInitialization's baseline gather (rgc@0x15a838): updateForceBaseline alone on the offset effort.
+    pub fn gather_baseline(&mut self, raw_effort: f64) {
+        self.update_baseline(raw_effort + self.config.effort_offset);
+    }
+
+    /// The startup sweep's buildDirectTarget (rgc@0x15e6e0) handed straight to moveJOTG (rgc@0x15e840): position
+    /// gains, zero torque, no control pass.
+    pub fn direct_target(&mut self, opening: f64) {
+        let motor = self.lut.opening_to_motor_rad(opening.clamp(0.0, 100.0));
+        self.otg_target = [motor, 0.0, self.config.kp, self.config.kd, 0.0];
+    }
+
+    /// The baseline a long-running rgc has converged to at this effort (0.001 blend per 2 ms pass, about 2 s): for
+    /// joining a vendor that is already running, where no startup is replayed.
+    pub fn settle_baseline(&mut self, raw_effort: f64) {
+        self.baseline_force = raw_effort + self.config.effort_offset;
     }
 
     /// updateForceBaseline rgc@0x15cec0.

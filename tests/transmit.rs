@@ -125,12 +125,13 @@ fn whole_send_path_reproduces_the_captured_chassis_and_gripper_frames() {
         count(0x051),
         count(0x061)
     );
-    // Right side: OPEN QUESTION. Fed the captured right feedback (opening 102 mm, torque 0.013 + the vendor's 0.5
-    // effort offset) our port of detectGrasping sees a closing grasp (102 > 100 + 0.5, |effort - baseline| > 0.1) and
-    // goes HYBRID then FORCE (kp 0, kd 0, t 2.0), while the capture shows POSITION gains. The vendor must see a
-    // different position or effort on /hdas/feedback_gripper_right than this decode; see LOGIC_VS_VENDOR.md.
+    // Right side: joining a running rgc (no startup replayed), the first feedback settles the force baseline, as a
+    // long-running rgc's has. The capture's jaw sits at 102 mm, above target + 0.5, so rgc's "closing" test holds and
+    // only a converged baseline keeps detectGrasping off: POSITION gains throughout, like the capture.
     let right_sent: Vec<_> = sent.iter().filter(|frame| frame.id == 0x061).collect();
-    assert!(right_sent.iter().any(|frame| frame.data[..4] == right[..4]), "right reaches the open angle");
+    let reached = right_sent.iter().position(|frame| frame.data == right).expect("right reaches the captured payload");
+    assert!(reached < 300, "OTG reaches the open angle within 0.6 s: {reached}");
+    assert!(right_sent[reached..].iter().all(|frame| frame.data == right), "and holds it with POSITION gains");
     for frame in &sent {
         match frame.id {
             0x031 => assert_eq!(frame.data, chassis),

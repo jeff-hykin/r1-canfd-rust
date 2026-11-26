@@ -15,8 +15,10 @@ CCU, VCU (chassis), TCU (torso) and both ACUs (arms) broadcast, decoded the way 
 - Commands other nodes put on the bus (arm, gripper, torso, chassis, LED, function frames) decode as observed
   traffic.
 - Send side: byte-exact ports of HDAS's encoders and command checks, chassis_control_node's swerve IK / ramp / timeout
-  loop, r1_gripper_controller's opening mapping and grasp modes, wheel odometry, and per-device commanders that return
-  frames (`commander`). Writing to the bus needs the off-by-default `transmit` feature (`Bus::send`). The vendor
+  loop, r1_gripper_controller's startup, opening mapping and grasp modes, the joint tracker's arm/torso planning with
+  Pinocchio-equivalent gravity feed-forward from a URDF (`joint_tracker`, `otg`, `gravity`), wheel odometry, and
+  per-device commanders that return frames (`commander`). Writing to the bus needs the off-by-default `transmit`
+  feature (`Bus::send`, `Bus::open_send_only`); `candump::format_line` logs what was or would be sent. The vendor
   comparison, step by step, is in [LOGIC_VS_VENDOR.md](LOGIC_VS_VENDOR.md).
 - `Tracker`: per-ID count, rate, gap range, staleness and payload lengths, worked out from frame timestamps only
   (no timers), so a replayed log reports what the live bus would have.

@@ -73,6 +73,14 @@ pub fn parse_line(line: &str, line_number: usize) -> Result<Option<LogFrame>, Pa
     Ok(Some(LogFrame { interface: interface.to_string(), frame }))
 }
 
+/// One outgoing CAN FD frame as a `candump -L` line (standard ID, `##` + `flags` nibble), so a log of frames we
+/// sent or would have sent reads back through [`parse_line`] and diffs against a real capture.
+pub fn format_line(timestamp_ns: u64, interface: &str, frame: &crate::encode::OutgoingFrame, flags: u8) -> String {
+    let data: String = frame.data.iter().map(|byte| format!("{byte:02X}")).collect();
+    let (seconds, nanos) = (timestamp_ns / 1_000_000_000, timestamp_ns % 1_000_000_000);
+    format!("({seconds}.{:06}) {interface} {:03X}##{:X}{data}", nanos / 1000, frame.id, flags & 0xF)
+}
+
 /// Every frame of a log, in order; stops at the first read error.
 pub fn read<R: BufRead>(reader: R) -> impl Iterator<Item = Result<LogFrame, Box<dyn std::error::Error>>> {
     reader.lines().enumerate().filter_map(|(index, line)| match line {
@@ -89,6 +97,16 @@ pub fn parse_str(text: &str) -> Result<Vec<LogFrame>, ParseError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn formatted_lines_parse_back() {
+        let frame =
+            crate::encode::OutgoingFrame { id: 0x061, data: vec![0xCC, 0x98, 0, 0, 0x04, 0xB0, 0x05, 0xDC, 0, 0] };
+        let line = format_line(1_795_639_172_670_876_123, "shadow", &frame, 0x03);
+        assert_eq!(line, "(1795639172.670876) shadow 061##3CC98000004B005DC0000");
+        let parsed = parse_line(&line, 1).unwrap().unwrap();
+        assert_eq!((parsed.frame.id, parsed.frame.flags, parsed.frame.data), (0x061, 0x03 | FLAG_FDF, frame.data));
+    }
 
     #[test]
     fn fd_classic_and_remote_lines() {
